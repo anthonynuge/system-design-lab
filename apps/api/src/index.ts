@@ -1,18 +1,27 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
-import pino from 'pino';
 import { pinoHttp } from 'pino-http';
 import { loadEnv } from '@sdl/shared/env';
 import { getPool, closeDb } from '@sdl/db';
-import { registry, httpRequestsTotal, httpRequestDurationSeconds } from './metrics.js';
+import { getRedis, closeRedis } from '@sdl/redis';
+import { getLogger } from '@sdl/logger';
+import {
+  initMetrics,
+  registry,
+  httpRequestsTotal,
+  httpRequestDurationSeconds,
+} from '@sdl/metrics';
 
 const env = loadEnv();
-const logger = pino({ level: env.LOG_LEVEL });
+initMetrics({ service: 'api' });
+const logger = getLogger();
 
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
 
+// Request-id middleware MUST come first so every downstream log line and
+// every queue job enqueued from this request carries the same id.
 app.use((req: Request, _res: Response, next: NextFunction) => {
   const header = req.header('x-request-id');
   req.headers['x-request-id'] = header && header.length > 0 ? header : randomUUID();
@@ -31,6 +40,9 @@ app.use(
   }),
 );
 
+// Metrics middleware records *after* the response so labels include the
+// final status code. Histogram is started before so we time the whole
+// pipeline including auth/rate-limit/idempotency middleware that v3 adds.
 app.use((req: Request, res: Response, next: NextFunction) => {
   const end = httpRequestDurationSeconds.startTimer();
   res.on('finish', () => {
@@ -52,6 +64,7 @@ app.get('/healthz', (_req, res) => {
 app.get('/readyz', async (_req, res) => {
   try {
     await getPool().query('SELECT 1');
+    await getRedis().ping();
     res.json({ status: 'ready' });
   } catch (err) {
     logger.error({ err }, 'readyz failed');
@@ -76,7 +89,7 @@ const server = app.listen(env.API_PORT, () => {
 async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'shutting down');
   server.close(() => logger.info('http server closed'));
-  await closeDb().catch((err) => logger.error({ err }, 'db close failed'));
+  await Promise.allSettled([closeDb(), closeRedis()]);
   setTimeout(() => process.exit(0), 1_000).unref();
 }
 
