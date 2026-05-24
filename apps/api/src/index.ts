@@ -11,6 +11,10 @@ import {
   httpRequestsTotal,
   httpRequestDurationSeconds,
 } from '@sdl/metrics';
+import usersRoutes from './routes/users.js';
+import apiKeysRoutes from './routes/api-keys.js';
+import eventsRoutes from './routes/events.js';
+import usageRoutes from './routes/usage.js';
 
 const env = loadEnv();
 initMetrics({ service: 'api' });
@@ -22,9 +26,13 @@ app.use(express.json({ limit: '1mb' }));
 
 // Request-id middleware MUST come first so every downstream log line and
 // every queue job enqueued from this request carries the same id.
-app.use((req: Request, _res: Response, next: NextFunction) => {
+// We also echo it back in the response header so the caller can correlate
+// from their side without trusting whatever they sent.
+app.use((req: Request, res: Response, next: NextFunction) => {
   const header = req.header('x-request-id');
-  req.headers['x-request-id'] = header && header.length > 0 ? header : randomUUID();
+  const id = header && header.length > 0 ? header : randomUUID();
+  req.headers['x-request-id'] = id;
+  res.setHeader('x-request-id', id);
   next();
 });
 
@@ -40,9 +48,7 @@ app.use(
   }),
 );
 
-// Metrics middleware records *after* the response so labels include the
-// final status code. Histogram is started before so we time the whole
-// pipeline including auth/rate-limit/idempotency middleware that v3 adds.
+// Metrics middleware. Histogram started before so we time the whole pipeline.
 app.use((req: Request, res: Response, next: NextFunction) => {
   const end = httpRequestDurationSeconds.startTimer();
   res.on('finish', () => {
@@ -76,6 +82,11 @@ app.get('/metrics', async (_req, res) => {
   res.setHeader('Content-Type', registry.contentType);
   res.end(await registry.metrics());
 });
+
+app.use('/v1', usersRoutes);
+app.use('/v1', apiKeysRoutes);
+app.use('/v1', eventsRoutes);
+app.use('/v1', usageRoutes);
 
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   req.log.error({ err }, 'unhandled error');

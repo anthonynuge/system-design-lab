@@ -29,6 +29,18 @@ const EnvSchema = z.object({
 
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
   SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+
+  // Per-key rate limit (fixed window). Set deliberately low so a casual
+  // curl loop trips it and you can see 429s in Grafana without k6.
+  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(60),
+  RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+
+  // Idempotency toggle. Set to "false" on scenario/no-idempotency to
+  // demonstrate duplicate writes; leave true on main.
+  IDEMPOTENCY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
