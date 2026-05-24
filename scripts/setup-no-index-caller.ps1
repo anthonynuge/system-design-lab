@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $BaseUrl = 'http://localhost:3000'
 
 Write-Host '==> creating user...' -ForegroundColor Cyan
-$randomEmail = "walkthrough-$(Get-Date -Format 'yyyyMMdd-HHmmss')@local"
+$randomEmail = "walkthrough-$(Get-Date -Format 'yyyyMMdd-HHmmss')@sdl.local.test"
 $body = @{ email = $randomEmail } | ConvertTo-Json -Compress
 $user = Invoke-RestMethod -Method POST -Uri "$BaseUrl/v1/users" `
     -ContentType 'application/json' -Body $body
