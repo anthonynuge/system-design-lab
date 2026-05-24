@@ -2,13 +2,19 @@
 
 This file is the "you are here" pointer. It's updated at the end of every working session — both by the user and by any AI assistant. If you (or future-Claude) sit down and have no memory of this repo, read **this file first**, then `LAB.md` for the rules.
 
-The other docs are reference: `LAB.md` (canonical workflow), `CLAUDE.md` (AI rules), `packages/db/README.md` (schema reasoning), `scenarios/README.md` (catalog index), `docs/incidents/*.md` (per-scenario post-mortems).
+The other docs are reference: `LAB.md` (canonical workflow), `CLAUDE.md` (AI rules), `packages/db/README.md` (schema reasoning), `scenarios/README.md` (catalog index), `docs/incidents/*.md` (per-scenario post-mortems), `docs/practice/README.md` (rebuild-from-scratch exercises — index only so far).
 
 ---
 
-## Last session: 2026-05-24
+## Last updated: 2026-05-24
 
-### Tag roadmap progress
+## Mode: PRACTICE
+
+The platform build is paused intentionally. v3 scenarios are exercisable and that's where the learning actually happens. **Do not start v4 work** until at least `scenario/no-index` has been run end-to-end with real numbers and a written incident doc. The repo's failure mode is "ship features, defer running them" — guard against it.
+
+---
+
+## Tag roadmap progress
 
 | tag | status | what it unlocks |
 |---|---|---|
@@ -16,71 +22,89 @@ The other docs are reference: `LAB.md` (canonical workflow), `CLAUDE.md` (AI rul
 | `v1-schema` | ✅ done | — |
 | `v2-shared-packages` | ✅ done | — |
 | `v3-api-surface` | ✅ done | `no-index`, `no-idempotency`, `rate-limiter-race`, `bad-pagination` |
-| `v4-queue-system` | ⏳ next | queue scenarios (worker-double-processing, visibility-timeout, queue-backpressure) |
+| `v4-queue-system` | 🚫 BLOCKED on v3 scenarios being exercised | worker-double-processing, visibility-timeout, queue-backpressure |
 | `v5-webhooks` | future | retry-storm, circuit-breaker |
 | `v6-observability-depth` | future | cache-stampede, connection-exhaustion |
 | `v7-bullmq-migration` | future | — |
 | `v8-multi-instance` | future | hot-partition |
 
-### Scenario branches that exist on `origin`
+## Scenario branches that exist on `origin`
 
-| scenario | solution | docs | state |
+| scenario | solution | docs | exercised? |
 |---|---|---|---|
-| `scenario/no-index` | `solution/index-added` | `docs/incidents/0001-no-index.md` | reproducer + fix both pushed. **User has not yet captured large-seed numbers.** Section 4 of the incident doc has blanks waiting for `pnpm db:seed -- large` + k6 results. |
+| `scenario/no-index` | `solution/index-added` | `docs/incidents/0001-no-index.md` | ❌ **NOT YET** — reproducer + fix both pushed; §4 of incident doc has blanks waiting for `pnpm db:seed -- large` + k6 numbers |
 
-### Current branch
+## Current branch
 
-- `main` is at tag `v3-api-surface` (the merge commit).
-- Working branches: none active. `feature/api-surface` was merged and deleted.
+- `main` is at the docs commit above `v3-api-surface`.
+- Working branches: none active in-flight. User is about to check out `scenario/no-index` to start the practice loop.
 
-### Last completed work
+## Last completed work (most recent first)
 
-PR #3 (`feature/api-surface`) merged → tag `v3-api-surface` pushed → `scenario/no-index` and `solution/index-added` created as a worked-example branch pair, both pushed to `origin`. Both contain `apps/load-tests/scripts/usage-burst.js`, the incident doc, and `scenarios/README.md`. The solution branch additionally contains migration `0006_requests_api_key_created_at_idx.sql` and the incident doc's §6b with captured EXPLAIN-plan-shape diffs.
+- Added `STATUS.md` and the `docs/practice/README.md` catalog index (the per-exercise spec files like `rate-limiter.md` are NOT yet written — deferred until after exercise #3 per agreed strategy).
+- `CLAUDE.md` updated to instruct AI sessions to read `STATUS.md` first and to update it as part of any state-changing session.
+- `scenario/no-index` + `solution/index-added` created as a worked-example branch pair off `v3-api-surface`. Both contain `apps/load-tests/scripts/usage-burst.js`, `docs/incidents/0001-no-index.md`, `scenarios/README.md`. Solution branch additionally contains migration `0006_requests_api_key_created_at_idx.sql` and the incident doc's §6b with captured EXPLAIN-plan-shape diffs.
+- PR #3 (`feature/api-surface`) merged → tag `v3-api-surface` pushed.
 
 ---
 
 ## What to pick up next (in priority order)
 
-### Option A — finish the v3 scenario family (≈ 1 weekend each, no new platform code)
+### 1. RUN `scenario/no-index` end-to-end (this is the next thing — do it before anything else)
 
-Three sibling scenario/solution pairs still need to be created, same pattern as `no-index`:
+```powershell
+git checkout scenario/no-index
+docker compose -f infra/compose/docker-compose.yml down -v
+pnpm infra:up && pnpm db:migrate && pnpm db:seed -- large
+# raise rate limit in .env: RATE_LIMIT_MAX_REQUESTS=100000
+pnpm dev:api
+# in another shell, follow docs/incidents/0001-no-index.md §2:
+#   - POST /v1/users, POST /v1/api-keys, capture $KEY
+#   - psql: EXPLAIN ANALYZE the usage query, save the plan
+#   - k6 run --summary-export=docs/benchmarks/no-index-before.json apps/load-tests/scripts/usage-burst.js
 
-1. **`scenario/no-idempotency` ↔ `solution/idempotency-key`**
-   - Approach: flip `IDEMPOTENCY_ENABLED=false`, write k6 retry script with same `Idempotency-Key`, count duplicates in `requests`.
-   - Solution branch: flip the env back; or, if more interesting, study the *race* that exists even with idempotency on (two simultaneous requests with the same key) and fix via row-level lock or PK retry.
-   - Incident doc: `docs/incidents/0002-no-idempotency.md`.
+git checkout solution/index-added
+pnpm db:migrate   # applies 0006
+# re-run the same EXPLAIN and the same k6:
+#   - k6 run --summary-export=docs/benchmarks/no-index-after.json apps/load-tests/scripts/usage-burst.js
 
-2. **`scenario/rate-limiter-race` ↔ `solution/token-bucket-lua`**
-   - Approach: k6 with 50 VUs all hitting the window-boundary instant; count how many pass the supposed cap of 60.
-   - Solution branch: replace the naive `GET`+`INCR` with a Redis Lua script that does check-and-increment atomically.
-   - Incident doc: `docs/incidents/0003-rate-limiter-race.md`.
+# Fill in §4 of docs/incidents/0001-no-index.md on BOTH branches with your real numbers.
+# Commit on each branch. Push.
 
-3. **`scenario/bad-pagination` ↔ `solution/keyset-pagination`**
-   - Approach: k6 sweeps `?offset=0` → `?offset=999000` against `/v1/usage` on the `large` seed; latency grows linearly.
-   - Solution branch: add a `?cursor=<created_at>:<id>` keyset pagination path that's O(log N) regardless of depth.
-   - Incident doc: `docs/incidents/0004-bad-pagination.md`.
+# Update STATUS.md: mark scenario/no-index as exercised.
+```
 
-Doing these in order also gives the user a chance to do `scenario/no-index` end-to-end on a `large` seed before moving on. The platform is unchanged across all four — only k6 scripts, migrations, and docs ship.
+Estimated time: ~2 hours. The output is two filled-in benchmark JSONs, a complete incident doc, and the first real piece of evidence that the lab works.
 
-### Option B — start `feature/queue-system` toward tag `v4-queue-system`
+### 2. Build the remaining three v3 scenario branches (same pattern as no-index, then exercise each)
 
-Adds the custom Postgres-backed queue (SKIP LOCKED), `apps/worker`, `apps/scheduler`. Powers `worker-double-processing`, `visibility-timeout`, `queue-backpressure`. Bigger change, opens richer scenarios, but doesn't add learning over Option A until v3 scenarios are exercised.
+In order: `scenario/no-idempotency`, `scenario/rate-limiter-race`, `scenario/bad-pagination`. Each is ~1 hour to scaffold + ~2 hours to run. **Do not scaffold all three then run them — scaffold one, run it, then scaffold the next.** That keeps the interleaved discipline.
 
-**Recommended:** Option A first (especially actually running `scenario/no-index` to completion with real numbers), then Option B. The point of the lab is to *run* scenarios, not collect them.
+Detailed approach for each:
+- `no-idempotency`: flip `IDEMPOTENCY_ENABLED=false`, k6 retry script, count duplicate `requests` rows. Solution flips back; stretch: study the PK race that exists even with idempotency on, fix via row-lock or PK-retry.
+- `rate-limiter-race`: 50 VUs hitting the window-boundary instant, count how many pass the cap of 60. Solution: Redis Lua script for atomic check-and-increment.
+- `bad-pagination`: k6 sweeps `?offset=0` → `?offset=999000` on the `large` seed; latency grows linearly. Solution: `?cursor=<created_at>:<id>` keyset pagination.
 
-### Option C — `docs/practice/` scaffolding
+### 3. ONLY after all four v3 scenarios are exercised: start `feature/queue-system` toward `v4-queue-system`
 
-Per the earlier conversation about rebuilding middleware from scratch, scaffold `docs/practice/` with one-page specs for each rebuild exercise (auth, rate-limit, idempotency) so they're discoverable later. Low effort, high future value when the user wants to rebuild from a tag.
+Adds the custom Postgres-backed queue (SKIP LOCKED), `apps/worker`, `apps/scheduler`. Powers worker-double-processing, visibility-timeout, queue-backpressure. **Don't start this until the v3 scenarios have real artifacts**, even if it's tempting.
+
+### Deferred (do when the matching tag ships)
+
+- `docs/practice/` per-exercise specs (rate-limiter.md, api-key-auth.md, idempotency.md). Index exists; specs deferred until after exercise #3 so they're informed by lived experience instead of guesses.
+- A `practice-from-tag` skill (worktree-based "don't peek" enforcement). Build only if 3+ practice sessions reveal that markdown + honor-system isn't enough.
 
 ---
 
 ## How to update this file
 
 At the end of any session that changes the repo's "state of play," update:
+- **Last updated** to today's date
+- **Mode** if it changed (build vs practice vs review)
 - **Tag roadmap** if a new tag was pushed
-- **Scenario branches that exist** if a new scenario/solution pair was created
+- **Scenario branches that exist** if a new pair was created OR if an existing one got exercised (flip the ❌ to ✅ and link the benchmark JSONs)
 - **Current branch** to reflect where the working tree was left
-- **Last completed work** with a one-paragraph summary
+- **Last completed work** with a one-paragraph summary at the top of the list
 - **What to pick up next** so the next session has a clear starting line
 
 Keep it under 200 lines. If "what's next" grows past 3 options, you're tracking too much — most belongs in a TODO or just gets done. This file is for orientation, not project management.
