@@ -1,0 +1,10 @@
+{
+  "name": "@sdl/load-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "k6 scripts. k6 is a separate binary, not invoked via node. Scripts are organized here so they live alongside the app.",
+  "scripts": {
+    "k6:usage-burst": "k6 run scripts/usage-burst.js",
+    "k6:usage-deep-offset": "k6 run scripts/usage-deep-offset.js"
+  }
+}
