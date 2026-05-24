@@ -8,9 +8,26 @@ The other docs are reference: `LAB.md` (canonical workflow), `CLAUDE.md` (AI rul
 
 ## Last updated: 2026-05-24
 
-## Mode: PRACTICE
+## Mode: PRACTICE — `scenario/no-index` run in progress, paused
 
 The platform build is paused intentionally. v3 scenarios are exercisable and that's where the learning actually happens. **Do not start v4 work** until at least `scenario/no-index` has been run end-to-end with real numbers and a written incident doc. The repo's failure mode is "ship features, defer running them" — guard against it.
+
+### Resume point — exactly where the user left off
+
+Walkthrough so far:
+- ✅ Window A: `docker compose down -v` → `pnpm infra:up` → `pnpm db:migrate` → `pnpm db:seed -- large` (1M `requests` rows loaded) → `pnpm dev:api`
+- ✅ Window B: `. .\scripts\setup-no-index-caller.ps1` succeeded. Created a walkthrough user + api key, exported env vars, sanity-checked `/v1/usage`.
+
+⚠ Env vars set in that Window B shell **die when the shell closes**. On resume, just re-run the setup script — it creates a fresh user/key each time, which is fine.
+
+**Pick-up sequence when you return:**
+1. If `pnpm dev:api` (Window A) isn't running anymore: `git checkout scenario/no-index` (or stay on whatever branch you're on — the api works on any v3+ branch) → `pnpm dev:api`. Docker volumes persisted; no need to re-seed.
+2. **Fresh Window B:** `. .\scripts\setup-no-index-caller.ps1` (note the leading dot-space)
+3. `.\scripts\capture-no-index-before.ps1` — EXPLAIN + k6, ~45s
+4. `git checkout solution/index-added && pnpm db:migrate`
+5. `.\scripts\capture-no-index-after.ps1` — same artifacts on the fixed state
+6. Fill in `docs/incidents/0001-no-index.md` §4 with real numbers, commit, push
+7. Update this file: flip the ❌ to ✅ in the scenario branches table below
 
 ---
 
